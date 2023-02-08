@@ -1,0 +1,67 @@
+name: Build - Docker image
+
+inputs:
+  aws_access_key_id:
+    description: "AWS_ACCESS_KEY_ID"
+    required: true
+  aws_secret_access_key:
+    description: "AWS_SECRET_ACCESS_KEY"
+    required: true
+  aws_region:
+    description: "Default aws regions to use"
+    default: "us-east-1"
+    required: false
+  deploy_key:
+    description: "Private deploy key"
+    required: true
+  deploy_key_path:
+    description: "SSH key path"
+    default: ".ssh/id_rsa"
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+    - name: Check out code
+      uses: actions/checkout@v2
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ inputs.aws_access_key_id }}
+        aws-secret-access-key: ${{ inputs.aws_secret_access_key }}
+        aws-region: ${{ inputs.aws_region }}
+
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Restore Docker cache
+      uses: actions/cache@v2
+      with:
+        path: ${{ runner.workspace }}/docker
+        key: ${{ runner.os }}-docker-${{ hashFiles('./Dockerfile') }}
+        restore-keys: |
+          ${{ runner.os }}-docker-
+
+    - name: Build, tag, and push image to Amazon ECR
+      shell: bash
+      env:
+        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        ECR_REPOSITORY: user
+        IMAGE_TAG: user
+        DEPLOY_KEY_PATH: ${{ inputs.deploy_key_path }}
+      run: |
+        mkdir -p .ssh
+        echo "${{ inputs.deploy_key }}" > $DEPLOY_KEY_PATH
+        docker build \
+          --build-arg DEPLOY_KEY=$DEPLOY_KEY_PATH \
+          -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        rm -rf $DEPLOY_KEY_PATH
+
+    - name: Save Docker cache
+      uses: actions/cache@v2
+      with:
+        path: ${{ runner.workspace }}/docker
+        key: ${{ runner.os }}-docker-${{ hashFiles('./Dockerfile') }}
